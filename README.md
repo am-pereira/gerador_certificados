@@ -43,14 +43,14 @@ O Gerador de Certificados é uma aplicação desktop desenvolvida para facilitar
 
 Se você deseja executar o programa a partir do código-fonte, siga estas etapas:
 
-1. Certifique-se de ter o Python 3.6 ou superior instalado
+1. Certifique-se de ter o Python 3.12 ou superior instalado
 2. Instale as dependências necessárias:
    ```
-   pip install pillow pandas tk
+   uv add pillow pandas tk
    ```
 3. Execute o arquivo principal:
    ```
-   python gerador_certificados.py
+   uv run python build.py
    ```
 
 ## Interface Principal
