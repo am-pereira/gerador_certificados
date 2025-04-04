@@ -46,6 +46,15 @@ class GeradorCertificados:
             "Verdana": "verdana.ttf"
         }
         
+        # Mapeamento de nomes de fontes para arquivos de fonte itálica
+        self.mapeamento_fontes_italicas = {
+            "Arial": "ariali.ttf",
+            "Times New Roman": "timesi.ttf",
+            "Calibri": "calibrii.ttf",
+            "Georgia": "georgiai.ttf",
+            "Verdana": "verdanai.ttf"
+        }
+        
         # Configuração para ícone do aplicativo quando for executável
         try:
             if getattr(sys, 'frozen', False):
@@ -122,8 +131,8 @@ class GeradorCertificados:
         ttk.Label(self.tab_geracao, text="Texto Principal:").grid(row=1, column=0, sticky=tk.W + tk.N, pady=5)
         self.texto_principal = tk.Text(self.tab_geracao, width=50, height=5)
         self.texto_principal.grid(row=1, column=1, columnspan=2, sticky=tk.W, pady=5)
-        ttk.Label(self.tab_geracao, text="Nota: O nome do participante será inserido no início deste texto.", 
-                 font=("Arial", 9, "italic")).grid(row=2, column=1, columnspan=2, sticky=tk.W)
+        ttk.Label(self.tab_geracao, text="Nota: O nome do participante aparecerá automaticamente acima deste texto.", 
+                font=("Arial", 9, "italic")).grid(row=2, column=1, columnspan=2, sticky=tk.W)
         
         # Carga horária
         ttk.Label(self.tab_geracao, text="Carga Horária:").grid(row=3, column=0, sticky=tk.W, pady=5)
@@ -489,8 +498,9 @@ class GeradorCertificados:
                     "data_geracao": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 
-                # Construir o texto completo com o nome do participante
-                texto_completo = f"Certificamos que {nome_participante} {texto_original}"
+                # O texto_completo agora não precisa incluir o nome do participante
+                # pois ele será exibido separadamente
+                texto_completo = texto_original
                 
                 # Gerar certificado
                 certificado_path = self.criar_certificado(nome_participante, texto_completo, codigo_autenticacao)
@@ -523,6 +533,143 @@ class GeradorCertificados:
             self.label_status.config(text="Erro ao gerar certificados")
             self.botao_gerar.config(state=tk.NORMAL)
     
+    def aplicar_italico(self, imagem, texto, fonte, posicao, cor, skew_factor=0.15):
+        """
+        Renderiza texto em estilo itálico usando transformação de imagem
+        
+        Args:
+            imagem: Imagem PIL
+            texto: Texto a ser renderizado
+            fonte: Objeto de fonte PIL
+            posicao: Tupla (x, y) para posicionamento
+            cor: Cor do texto
+            skew_factor: Fator de inclinação (0.1-0.2 para itálico sutil)
+        """
+        try:
+            # Tentar obter dimensões do texto usando getbbox (Pillow recente)
+            try:
+                texto_tamanho = fonte.getbbox(texto)
+                largura_texto = texto_tamanho[2] - texto_tamanho[0]
+                altura_texto = texto_tamanho[3] - texto_tamanho[1]
+            except AttributeError:
+                # Fallback para versões mais antigas do Pillow
+                largura_texto, altura_texto = self.get_text_dimensions(texto, fonte)
+            
+            # Adicionar espaço para a transformação
+            largura_extra = int(altura_texto * skew_factor)
+            
+            # Criar imagem para o texto com fundo transparente
+            texto_img = Image.new('RGBA', (largura_texto + largura_extra, altura_texto), (0, 0, 0, 0))
+            texto_draw = ImageDraw.Draw(texto_img)
+            
+            # Desenhar o texto na imagem temporária
+            texto_draw.text((0, 0), texto, font=fonte, fill=cor)
+            
+            # Aplicar transformação para criar o efeito itálico
+            matriz = [1, 0, skew_factor, 0, 1, 0]
+            texto_italico = texto_img.transform(
+                texto_img.size, 
+                Image.AFFINE, 
+                matriz,
+                Image.BICUBIC
+            )
+            
+            # Colar a imagem transformada na imagem principal
+            if imagem.mode == 'RGBA':
+                imagem.paste(texto_italico, posicao, texto_italico)
+            else:
+                # Converter para RGBA temporariamente se necessário
+                imagem_temp = imagem.convert('RGBA')
+                imagem_temp.paste(texto_italico, posicao, texto_italico)
+                imagem = imagem_temp.convert(imagem.mode)
+            
+            return imagem
+        except Exception as e:
+            # Em caso de erro, usar o método padrão de desenho de texto
+            print(f"Erro ao aplicar itálico: {str(e)}")
+            draw = ImageDraw.Draw(imagem)
+            draw.text(posicao, texto, font=fonte, fill=cor)
+            return imagem
+
+    def desenhar_texto_centralizado(self, draw, texto, fonte, x_inicio, y_inicio, largura_max, cor, espacamento, italico=False):
+        """
+        Desenha o texto centralizado na imagem com espaçamento controlado entre linhas
+        
+        Args:
+            draw: Objeto ImageDraw
+            texto: Texto a ser renderizado
+            fonte: Objeto de fonte PIL
+            x_inicio: Posição X inicial (margem esquerda)
+            y_inicio: Posição Y inicial (topo)
+            largura_max: Largura máxima do texto
+            cor: Cor do texto
+            espacamento: Fator de espaçamento entre linhas
+            italico: Se True, aplica transformação para simular itálico
+        """
+        # Altura da linha com espaçamento personalizado
+        altura_linha = self.get_text_dimensions("Tg", fonte)[1] * espacamento
+        
+        # Dividir o texto em parágrafos
+        paragrafos = texto.split('\n')
+        y_atual = y_inicio
+        
+        for paragrafo in paragrafos:
+            if not paragrafo.strip():
+                # Pular linhas vazias
+                y_atual += altura_linha
+                continue
+            
+            # Dividir o parágrafo em palavras
+            palavras = paragrafo.split()
+            linha_atual = []
+            largura_atual = 0
+            espaco_normal = self.get_text_dimensions(" ", fonte)[0]
+            
+            for palavra in palavras:
+                largura_palavra = self.get_text_dimensions(palavra, fonte)[0]
+                
+                # Verificar se adicionar esta palavra excederia a largura máxima
+                if linha_atual and largura_atual + espaco_normal + largura_palavra > largura_max:
+                    # Desenhar a linha atual centralizada
+                    texto_linha = " ".join(linha_atual)
+                    largura_texto = self.get_text_dimensions(texto_linha, fonte)[0]
+                    x_centralizado = x_inicio + (largura_max - largura_texto) / 2
+                    
+                    if italico:
+                        # Aplica a transformação itálica
+                        self.aplicar_italico(draw.im, texto_linha, fonte, (int(x_centralizado), int(y_atual)), cor)
+                    else:
+                        # Desenho normal
+                        draw.text((x_centralizado, y_atual), texto_linha, font=fonte, fill=cor)
+                    
+                    # Avançar para a próxima linha
+                    y_atual += altura_linha
+                    linha_atual = [palavra]
+                    largura_atual = largura_palavra
+                else:
+                    # Adicionar a palavra à linha atual
+                    if linha_atual:  # Se não for a primeira palavra da linha
+                        largura_atual += espaco_normal
+                    linha_atual.append(palavra)
+                    largura_atual += largura_palavra
+            
+            # Processar a última linha do parágrafo (também centralizada)
+            if linha_atual:
+                texto_linha = " ".join(linha_atual)
+                largura_texto = self.get_text_dimensions(texto_linha, fonte)[0]
+                x_centralizado = x_inicio + (largura_max - largura_texto) / 2
+                
+                if italico:
+                    # Aplica a transformação itálica
+                    self.aplicar_italico(draw.im, texto_linha, fonte, (int(x_centralizado), int(y_atual)), cor)
+                else:
+                    # Desenho normal
+                    draw.text((x_centralizado, y_atual), texto_linha, font=fonte, fill=cor)
+                
+                y_atual += altura_linha
+        
+        return y_atual
+
     def desenhar_texto_justificado(self, draw, texto, fonte, x_inicio, y_inicio, largura_max, cor, espacamento):
         """Desenha o texto justificado na imagem com espaçamento controlado entre palavras"""
         # Parâmetros para controle de espaçamento
@@ -606,7 +753,7 @@ class GeradorCertificados:
                 y_atual += altura_linha
         
         return y_atual
-    
+
     def get_text_dimensions(self, text, font):
         """Obtém as dimensões do texto de forma compatível com diferentes versões do Pillow"""
         try:
@@ -623,10 +770,10 @@ class GeradorCertificados:
                     from PIL import ImageDraw
                     dummy_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
                     return dummy_draw.textsize(text, font=font)
-                except:
+                except Exception:
                     # Método de fallback: estimativa básica baseada no tamanho da fonte
                     return len(text) * font.size // 2, font.size
-    
+
     def criar_certificado(self, nome_participante, texto_completo, codigo_autenticacao):
         """Cria um certificado individual para um participante"""
         # Carregar a imagem de fundo
@@ -645,6 +792,7 @@ class GeradorCertificados:
         
         # Obter o nome do arquivo de fonte selecionada
         nome_arquivo_fonte = self.mapeamento_fontes.get(self.estilo_fonte.get(), "arial.ttf")
+        nome_arquivo_fonte_italica = self.mapeamento_fontes_italicas.get(self.estilo_fonte.get(), "ariali.ttf")
         
         # Fontes para cada seção do certificado
         try:
@@ -655,25 +803,66 @@ class GeradorCertificados:
                 else:
                     base_path = os.path.dirname(os.path.abspath(__file__))
                 
-                fonte_texto = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 60)
-                fonte_data = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 45)
-                fonte_codigo = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 30)
-            except:
-                # Tenta carregar fontes do sistema
-                fonte_texto = ImageFont.truetype(nome_arquivo_fonte, 60)
-                fonte_data = ImageFont.truetype(nome_arquivo_fonte, 45)
-                fonte_codigo = ImageFont.truetype(nome_arquivo_fonte, 30)
-        except:
-            # Se falhar ao carregar a fonte específica, tenta carregar a Arial
-            try:
-                fonte_texto = ImageFont.truetype("arial.ttf", 60)
-                fonte_data = ImageFont.truetype("arial.ttf", 45)
-                fonte_codigo = ImageFont.truetype("arial.ttf", 30)
-            except:
-                # Como última opção, usa a fonte padrão
-                fonte_texto = ImageFont.load_default()
-                fonte_data = ImageFont.load_default()
-                fonte_codigo = ImageFont.load_default()
+                # Tenta carregar fontes itálicas para nome e texto principal
+                try:
+                    # Primeiro tenta carregar a fonte itálica do sistema
+                    fonte_nome = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte_italica), 135)
+                    fonte_texto = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte_italica), 45)
+                    
+                    # Para as demais fontes usa normal
+                    fonte_data = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 45)
+                    fonte_codigo = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 30)
+                    
+                    # Marca que conseguimos carregar as fontes itálicas
+                    fontes_italicas_carregadas = True
+                except Exception:
+                    # Se falhar ao carregar fontes itálicas, usar fontes normais
+                    fonte_nome = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 135)
+                    fonte_texto = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 45)
+                    fonte_data = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 40)
+                    fonte_codigo = ImageFont.truetype(os.path.join(base_path, "fonts", nome_arquivo_fonte), 30)
+                    
+                    # Marca que não conseguimos carregar as fontes itálicas
+                    fontes_italicas_carregadas = False
+            except Exception:
+                # Se falhar, tenta carregar do sistema
+                try:
+                    try:
+                        # Tenta carregar fontes itálicas do sistema
+                        fonte_nome = ImageFont.truetype(nome_arquivo_fonte_italica, 135)
+                        fonte_texto = ImageFont.truetype(nome_arquivo_fonte_italica, 45)
+                        fonte_data = ImageFont.truetype(nome_arquivo_fonte, 40)
+                        fonte_codigo = ImageFont.truetype(nome_arquivo_fonte, 30)
+                        
+                        # Marca que conseguimos carregar as fontes itálicas
+                        fontes_italicas_carregadas = True
+                    except Exception:
+                        # Se falhar, usa fontes normais
+                        fonte_nome = ImageFont.truetype(nome_arquivo_fonte, 135)
+                        fonte_texto = ImageFont.truetype(nome_arquivo_fonte, 45)
+                        fonte_data = ImageFont.truetype(nome_arquivo_fonte, 40)
+                        fonte_codigo = ImageFont.truetype(nome_arquivo_fonte, 30)
+                        
+                        # Marca que não conseguimos carregar as fontes itálicas
+                        fontes_italicas_carregadas = False
+                except Exception:
+                    # Se tudo falhar, usa fontes padrão
+                    fonte_nome = ImageFont.load_default()
+                    fonte_texto = ImageFont.load_default()
+                    fonte_data = ImageFont.load_default()
+                    fonte_codigo = ImageFont.load_default()
+                    
+                    # Marca que não conseguimos carregar as fontes itálicas
+                    fontes_italicas_carregadas = False
+        except Exception:
+            # Como última opção, usa a fonte padrão
+            fonte_nome = ImageFont.load_default()
+            fonte_texto = ImageFont.load_default()
+            fonte_data = ImageFont.load_default()
+            fonte_codigo = ImageFont.load_default()
+            
+            # Marca que não conseguimos carregar as fontes itálicas
+            fontes_italicas_carregadas = False
         
         # Obter a cor da fonte selecionada
         cor_texto = self.cores[self.cor_fonte.get()]
@@ -682,17 +871,53 @@ class GeradorCertificados:
         fator_espacamento = float(self.espacamento_linhas.get())
         
         # Posição inicial do texto principal e sua largura máxima (para justificação)
-        x_inicio_texto = width_px * 0.15  # 15% da largura (margem esquerda)
-        largura_max_texto = width_px * 0.7  # 70% da largura (restante para margem direita)
-        y_inicio_texto = 950  # Ajustado para ficar onde antes ficava o nome
+        x_inicio_texto = width_px * 0.20  # 20% da largura (margem esquerda)
+        largura_max_texto = width_px * 0.6  # 60% da largura (restante para margem direita)
         
-        # Desenhar o texto justificado (agora incluindo o nome do participante no início)
-        y_final_texto = self.desenhar_texto_justificado(
-            draw, texto_completo, fonte_texto, 
-            x_inicio_texto, y_inicio_texto, 
-            largura_max_texto, cor_texto,
-            fator_espacamento
-        )
+        # Posicionar o nome do participante acima do texto principal
+        y_inicio_nome = height_px * 0.47  # Ajustado para ficar adequadamente acima do texto principal
+        
+        # Centralizar o nome do participante
+        w_nome, h_nome = self.get_text_dimensions(nome_participante, fonte_nome)
+        x_nome = (width_px - w_nome) / 2
+        
+        # Desenhar o nome do participante centralizado e em itálico
+        if fontes_italicas_carregadas:
+            # Se temos fontes itálicas, usamos diretamente
+            draw.text((x_nome, y_inicio_nome), nome_participante, font=fonte_nome, fill=cor_texto)
+        else:
+            # Caso contrário, aplicamos a transformação
+            try:
+                imagem_fundo = self.aplicar_italico(imagem_fundo, nome_participante, fonte_nome, (int(x_nome), int(y_inicio_nome)), cor_texto)
+            except Exception:
+                # Fallback para desenho normal em caso de erro
+                draw.text((x_nome, y_inicio_nome), nome_participante, font=fonte_nome, fill=cor_texto)
+        
+        # Posicionar o texto principal após o nome do participante
+        y_inicio_texto = y_inicio_nome + h_nome + 100  # Espaço entre o nome e o texto principal
+        
+        # Texto original do campo de texto (sem o nome do participante)
+        texto_principal = texto_completo
+        
+        # Desenhar o texto centralizado e em itálico 
+        if fontes_italicas_carregadas:
+            # Se temos fontes itálicas, usamos o método de centralização sem a transformação
+            y_final_texto = self.desenhar_texto_centralizado(
+                draw, texto_principal, fonte_texto, 
+                x_inicio_texto, y_inicio_texto, 
+                largura_max_texto, cor_texto,
+                fator_espacamento,
+                italico=False  # Não precisamos da transformação aqui
+            )
+        else:
+            # Caso contrário, aplicamos a transformação durante a centralização
+            y_final_texto = self.desenhar_texto_centralizado(
+                draw, texto_principal, fonte_texto, 
+                x_inicio_texto, y_inicio_texto, 
+                largura_max_texto, cor_texto,
+                fator_espacamento,
+                italico=True  # Aplica a transformação itálica
+            )
         
         # Carga horária (se fornecida) - alinhada à esquerda, abaixo do texto principal
         y_final_texto_com_espaco = y_final_texto + 80
@@ -761,7 +986,7 @@ class GeradorCertificados:
         imagem_fundo.save(caminho_completo, "PDF", resolution=300)
         
         return caminho_completo
-    
+
     def baixar_certificados(self):
         """Abre diálogo para salvar o arquivo ZIP dos certificados"""
         if not self.zip_file_path or not os.path.exists(self.zip_file_path):
@@ -793,7 +1018,6 @@ if __name__ == "__main__":
             f"Ocorreu um erro inesperado:\n{exc_value}\n\nPor favor, entre em contato com o suporte."
         )
         # Registrar em arquivo de log
-        import traceback
         import logging
         logging.basicConfig(
             filename='error_log.txt',
